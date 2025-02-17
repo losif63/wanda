@@ -141,7 +141,11 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         if f"model.layers.{i}" in model.hf_device_map:   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
             dev = model.hf_device_map[f"model.layers.{i}"]
-            inps, outs, attention_mask, position_ids = inps.to(dev), outs.to(dev), attention_mask.to(dev), position_ids.to(dev)
+            if attention_mask != None:
+                attention_mask = attention_mask.to(dev)
+            if position_ids != None:
+                position_ids = position_ids.to(dev)
+            inps, outs = inps.to(dev), outs.to(dev)
 
         wrapped_layers = {}
         for name in subset:

@@ -2,3 +2,6 @@
 .env
 *.pyc
 *.DS_Store
+Tensors/**
+results/**
+lm-evaluation-harness/**

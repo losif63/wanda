@@ -7,6 +7,10 @@ from .layerwrapper import WrappedGPT
 from .data import get_loaders 
 
 from .ablate import AblateGPT 
+import gc
+import cv2
+import numpy as np
+import os
 
 def find_layers(module, layers=[nn.Linear], name=''):
     """
@@ -135,6 +139,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
         inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device)
 
     layers = model.model.layers
+
     for i in range(len(layers)):
         layer = layers[i]
         subset = find_layers(layer)
@@ -150,6 +155,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
         wrapped_layers = {}
         for name in subset:
             wrapped_layers[name] = WrappedGPT(subset[name])
+            wrapped_layers[name].i = i
+            wrapped_layers[name].name = name
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -168,7 +175,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
         for name in subset:
             print(f"pruning layer {i} name {name}")
             W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
-
+            
             W_mask = (torch.zeros_like(W_metric) == 1)  ## initialize a mask to be all False
             if prune_n != 0:
                 # structured n:m sparsity
@@ -198,12 +205,35 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                         alpha = alpha_new 
                         W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
                     print(f"alpha found {alpha} sparsity {cur_sparsity:.6f}")
+                    del sort_res
                 else:
                     # unstructured pruning
                     indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                     W_mask.scatter_(1, indices, True)
-
-            subset[name].weight.data[W_mask] = 0  ## set weights to zero 
+            
+            target_types = []
+            if args.modify_type == "all":
+                target_types = ["attn", "mlp"]
+            elif args.modify_type == "attn":
+                target_types = ["attn"]
+            elif args.modify_type == "mlp":
+                target_types = ["mlp"]
+            type_satisfy = False
+            for target in target_types:
+                if target in name:
+                    type_satisfy = True
+                    break
+                
+            if i == args.modify_layer and type_satisfy:
+                temp = subset[name].weight.data.clone()
+                temp[~W_mask] = 0
+                subset[name].bias.data = temp @ wrapped_layers[name].input_avg.to(subset[name].bias.data.dtype)
+                del temp
+            
+            subset[name].weight.data[W_mask] = 0  ## set weights to zero
+            del W_metric, W_mask, wrapped_layers[name]
+            gc.collect()
+            torch.cuda.empty_cache()
 
         for j in range(args.nsamples):
             with torch.no_grad():

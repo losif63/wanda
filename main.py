@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
+import json
 
 from lib.prune import prune_wanda, prune_magnitude, prune_sparsegpt, prune_ablate, check_sparsity, find_layers
 from lib.eval import eval_ppl, eval_zero_shot
@@ -38,6 +39,8 @@ def main():
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default=None, help='Path to save results.')
     parser.add_argument('--save_model', type=str, default=None, help='Path to save the pruned model.')
+    parser.add_argument('--modify_layer', type=int, default=0, help='Layer to add bias term')
+    parser.add_argument('--modify_type', type=str, default="all", help='Modules to add bias term')
 
     parser.add_argument("--eval_zero_shot", action="store_true")
     args = parser.parse_args()
@@ -57,6 +60,22 @@ def main():
     model = get_llm(args.model, args.cache_dir)
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False)
+    
+    # Turn on bias vector
+    for module in model.modules():
+        if any(isinstance(child, torch.nn.Linear) for child in module.children()):
+            for childname, child in module.named_children():
+                if isinstance(child, torch.nn.Linear):
+                    new_layer = torch.nn.Linear(in_features=child.in_features, 
+                                                out_features=child.out_features, 
+                                                bias=True,
+                                                dtype=child.weight.dtype,
+                                                device=child.weight.device)
+                    new_layer.weight.data = child.weight.data.clone()
+                    new_layer.bias.data.zero_()
+                    del child
+                    setattr(module, childname, new_layer)
+        torch.cuda.empty_cache()
 
     device = torch.device("cuda:0")
     if "30b" in args.model or "65b" in args.model: # for 30b and 65b we use device_map to load onto multiple A6000 GPUs, thus the processing here.
@@ -82,25 +101,32 @@ def main():
     ################################################################
     ppl_test = eval_ppl(args, model, tokenizer, device)
     print(f"wikitext perplexity {ppl_test}")
+    os.makedirs(os.path.dirname(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/ppl.txt"), exist_ok=True)
+    with open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/ppl.txt", "w") as f:
+        f.write(f"{ppl_test}")
 
-    if not os.path.exists(args.save):
-        os.makedirs(args.save)
-    save_filepath = os.path.join(args.save, f"log_{args.prune_method}.txt")
-    with open(save_filepath, "w") as f:
-        print("method\tactual_sparsity\tppl_test", file=f, flush=True)
-        print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}", file=f, flush=True)
+    # if not os.path.exists(args.save):
+    #     os.makedirs(args.save)
+    # save_filepath = os.path.join(args.save, f"log_{args.prune_method}.txt")
+    # with open(save_filepath, "w") as f:
+    #     print("method\tactual_sparsity\tppl_test", file=f, flush=True)
+    #     print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}", file=f, flush=True)
 
     if args.eval_zero_shot:
         accelerate=False
         if "30b" in args.model or "65b" in args.model or "70b" in args.model:
             accelerate=True
 
-        task_list = ["boolq", "rte","hellaswag","winogrande", "arc_easy","arc_challenge", "openbookqa"]
+        # task_list = ["boolq", "rte","hellaswag","winogrande", "arc_easy","arc_challenge", "openbookqa"]
+        task_list = ["hellaswag"]
         num_shot = 0
         results = eval_zero_shot(args.model, model, tokenizer, task_list, num_shot, accelerate)
+        json.dump(results, open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/tasks.json", "w"),
+                    indent=4)
         print("********************************")
         print("zero_shot evaluation results")
         print(results)
+        
 
     if args.save_model:
         model.save_pretrained(args.save_model)

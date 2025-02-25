@@ -39,8 +39,9 @@ def main():
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default=None, help='Path to save results.')
     parser.add_argument('--save_model', type=str, default=None, help='Path to save the pruned model.')
-    parser.add_argument('--modify_layer', type=int, default=0, help='Layer to add bias term')
-    parser.add_argument('--modify_type', type=str, default="all", help='Modules to add bias term')
+    parser.add_argument('--modify_layer', nargs="+", type=int, default=None, help='Layer to add bias term / 0 - 31')
+    parser.add_argument('--modify_type', nargs="+", type=str, default=None, help='Module type to add bias / q, k, v, o, up, gate, down')
+
 
     parser.add_argument("--eval_zero_shot", action="store_true")
     args = parser.parse_args()

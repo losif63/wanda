@@ -184,6 +184,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                         tmp = W_metric[:,ii:(ii+prune_m)].float()
                         W_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else:
+                W_metric = W_metric.to("cpu")
+                torch.cuda.empty_cache()
                 sort_res = torch.sort(W_metric, dim=-1, stable=True)
 
                 if args.use_variant:
@@ -209,22 +211,21 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                 else:
                     # unstructured pruning
                     indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
-                    W_mask.scatter_(1, indices, True)
+                    W_mask.scatter_(1, indices.to(device), True)
             
-            target_types = []
-            if args.modify_type == "all":
-                target_types = ["attn", "mlp"]
-            elif args.modify_type == "attn":
-                target_types = ["attn"]
-            elif args.modify_type == "mlp":
-                target_types = ["mlp"]
-            type_satisfy = False
-            for target in target_types:
-                if target in name:
-                    type_satisfy = True
-                    break
+            targets = {
+                "q": "self_attn.q_proj",
+                "k": "self_attn.k_proj",
+                "v": "self_attn.v_proj",
+                "o": "self_attn.o_proj",
+                "up": "mlp.up_proj",
+                "gate": "mlp.gate_proj",
+                "down": "mlp.down_proj"
+            }
+            target_types = [targets[target] for target in args.modify_type]
                 
-            if i == args.modify_layer and type_satisfy:
+            if i in args.modify_layer and name in target_types:
+                print(f"Adding Bias for Layer {i}, Module type {name}")
                 temp = subset[name].weight.data.clone()
                 temp[~W_mask] = 0
                 subset[name].bias.data = temp @ wrapped_layers[name].input_avg.to(subset[name].bias.data.dtype)

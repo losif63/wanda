@@ -31,9 +31,9 @@ class WrappedGPT:
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
             inp = inp.t()
-
-        # os.makedirs(os.path.dirname(f"Tensors/Layer{self.i}_{self.name}_inp{self.nsamples}.pt"), exist_ok=True)
-        # torch.save(inp, f"Tensors/Layer{self.i}_{self.name}_inp{self.nsamples}.pt")  
+        # if self.nsamples % 8 == 0:
+        #     os.makedirs(os.path.dirname(f"Tensors/Layer{self.i}_{self.name}_inp{self.nsamples}.pt"), exist_ok=True)
+        #     torch.save(inp, f"Tensors/Layer{self.i}_{self.name}_inp{self.nsamples}.pt")  
 
         self.scaler_row *= self.nsamples / (self.nsamples+tmp)
         self.input_avg *= self.nsamples / (self.nsamples+tmp)

@@ -133,7 +133,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     model.config.use_cache = False 
 
     print("loading calibdation data")
-    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=4096,tokenizer=tokenizer)
     print("dataset loading complete")
     with torch.no_grad():
         inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device)
@@ -213,23 +213,58 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                     indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                     W_mask.scatter_(1, indices.to(device), True)
             
-            targets = {
-                "q": "self_attn.q_proj",
-                "k": "self_attn.k_proj",
-                "v": "self_attn.v_proj",
-                "o": "self_attn.o_proj",
-                "up": "mlp.up_proj",
-                "gate": "mlp.gate_proj",
-                "down": "mlp.down_proj"
-            }
-            target_types = [targets[target] for target in args.modify_type]
+############### NEW RESEARCH: ADD BIAS VECTOR ########################
+            if not args.hetero:
+                targets = {
+                    "q": "self_attn.q_proj",
+                    "k": "self_attn.k_proj",
+                    "v": "self_attn.v_proj",
+                    "o": "self_attn.o_proj",
+                    "up": "mlp.up_proj",
+                    "gate": "mlp.gate_proj",
+                    "down": "mlp.down_proj"
+                }
+                target_types = [targets[target] for target in args.modify_type]
+                    
+                if i in args.modify_layer and name in target_types:
+                    print(f"Adding Bias for Layer {i}, Module type {name}")
+                    if args.percentile != None:
+                        bias_mask = torch.load(f"percentiles/Layer{i}/{name}/{args.percentile}th_mask.pt", weights_only=True).to(device)
+                    temp = subset[name].weight.data.clone()
+                    temp[~W_mask] = 0
+                    if args.percentile != None:
+                        wrapped_layers[name].input_avg.data[~bias_mask] = 0.0
+                        del bias_mask
+                    subset[name].bias.data = temp @ wrapped_layers[name].input_avg.to(subset[name].bias.data.dtype)
+                    del temp
+            else:
+                modify_layers = []
+                if name == "self_attn.q_proj":
+                    modify_layers = args.hetero_q
+                elif name == "self_attn.k_proj":
+                    modify_layers = args.hetero_k
+                elif name == "self_attn.v_proj":
+                    modify_layers = args.hetero_v
+                elif name == "self_attn.o_proj":
+                    modify_layers = args.hetero_o
+                elif name == "mlp.up_proj":
+                    modify_layers = args.hetero_up
+                elif name == "mlp.gate_proj":
+                    modify_layers = args.hetero_gate
+                elif name == "mlp.down_proj":
+                    modify_layers = args.hetero_down
                 
-            if i in args.modify_layer and name in target_types:
-                print(f"Adding Bias for Layer {i}, Module type {name}")
-                temp = subset[name].weight.data.clone()
-                temp[~W_mask] = 0
-                subset[name].bias.data = temp @ wrapped_layers[name].input_avg.to(subset[name].bias.data.dtype)
-                del temp
+                if i in modify_layers:
+                    print(f"Adding Bias for Layer {i}, Module type {name}")
+                    if args.percentile != None:
+                        bias_mask = torch.load(f"percentiles/Layer{i}/{name}/{args.percentile}th_mask.pt", weights_only=True).to(device)
+                    temp = subset[name].weight.data.clone()
+                    temp[~W_mask] = 0
+                    if args.percentile != None:
+                        wrapped_layers[name].input_avg.data[~bias_mask] = 0.0
+                        del bias_mask
+                    subset[name].bias.data = temp @ wrapped_layers[name].input_avg.to(subset[name].bias.data.dtype)
+                    del temp
             
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
             del W_metric, W_mask, wrapped_layers[name]

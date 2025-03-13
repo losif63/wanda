@@ -20,7 +20,7 @@ def eval_ppl(args, model, tokenizer, device=torch.device("cuda:0")):
 
     # Get the test loader
     _, testloader = get_loaders(
-        dataset, seed=0, seqlen=model.seqlen, tokenizer=tokenizer 
+        dataset, seed=0, seqlen=4096, tokenizer=tokenizer 
     )
 
     # Evaluate ppl in no grad context to avoid updating the model

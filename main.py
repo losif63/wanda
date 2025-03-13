@@ -39,8 +39,17 @@ def main():
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default=None, help='Path to save results.')
     parser.add_argument('--save_model', type=str, default=None, help='Path to save the pruned model.')
-    parser.add_argument('--modify_layer', nargs="+", type=int, default=None, help='Layer to add bias term / 0 - 31')
-    parser.add_argument('--modify_type', nargs="+", type=str, default=None, help='Module type to add bias / q, k, v, o, up, gate, down')
+    parser.add_argument('--modify_layer', nargs="+", type=int, default=[], help='Layer to add bias term / 0 - 31')
+    parser.add_argument('--modify_type', nargs="+", type=str, default=[], help='Module type to add bias / q, k, v, o, up, gate, down')
+    parser.add_argument('--hetero', action="store_true", help="Whether to modify heterogeneous layers")
+    parser.add_argument('--hetero_q', nargs="+", type=int, default=[], help="Layers to modify q_proj")
+    parser.add_argument('--hetero_k', nargs="+", type=int, default=[], help="Layers to modify k_proj")
+    parser.add_argument('--hetero_v', nargs="+", type=int, default=[], help="Layers to modify v_proj")
+    parser.add_argument('--hetero_o', nargs="+", type=int, default=[], help="Layers to modify o_proj")
+    parser.add_argument('--hetero_up', nargs="+", type=int, default=[], help="Layers to modify up_proj")
+    parser.add_argument('--hetero_gate', nargs="+", type=int, default=[], help="Layers to modify gate_proj")
+    parser.add_argument('--hetero_down', nargs="+", type=int, default=[], help="Layers to modify down_proj")
+    parser.add_argument('--percentile', type=int, default=None, help='Percentile for bias vector')
 
 
     parser.add_argument("--eval_zero_shot", action="store_true")
@@ -102,9 +111,28 @@ def main():
     ################################################################
     ppl_test = eval_ppl(args, model, tokenizer, device)
     print(f"wikitext perplexity {ppl_test}")
-    os.makedirs(os.path.dirname(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/ppl.txt"), exist_ok=True)
-    with open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/ppl.txt", "w") as f:
-        f.write(f"{ppl_test}")
+    if not args.hetero:
+        if args.percentile == None:
+            os.makedirs(os.path.dirname(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/ppl.txt"), exist_ok=True)
+            with open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/ppl.txt", "w") as f:
+                f.write(f"{ppl_test}")
+        else:
+            os.makedirs(os.path.dirname(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/{args.percentile}th_ppl.txt"), exist_ok=True)
+            with open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/{args.percentile}th_ppl.txt", "w") as f:
+                f.write(f"{ppl_test}")
+    else:
+        str_q = "".join(map(str, args.hetero_q))
+        str_k = "".join(map(str, args.hetero_k))
+        str_v = "".join(map(str, args.hetero_v))
+        str_o = "".join(map(str, args.hetero_o))
+        str_up = "".join(map(str, args.hetero_up))
+        str_gate = "".join(map(str, args.hetero_gate))
+        str_down = "".join(map(str, args.hetero_down))
+        filepath = f"results/{model_name}/Hetero/Q{str_q}K{str_k}V{str_v}O{str_o}Up{str_up}Gate{str_gate}Down{str_down}/ppl.txt"
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, "w") as f:
+            f.write(f"{ppl_test}")
+        
 
     # if not os.path.exists(args.save):
     #     os.makedirs(args.save)
@@ -118,12 +146,27 @@ def main():
         if "30b" in args.model or "65b" in args.model or "70b" in args.model:
             accelerate=True
 
-        # task_list = ["boolq", "rte","hellaswag","winogrande", "arc_easy","arc_challenge", "openbookqa"]
-        task_list = ["hellaswag"]
+        task_list = ["boolq", "rte","hellaswag","winogrande", "arc_easy","arc_challenge", "openbookqa"]
+        # task_list = ["hellaswag"]
         num_shot = 0
         results = eval_zero_shot(args.model, model, tokenizer, task_list, num_shot, accelerate)
-        json.dump(results, open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/tasks.json", "w"),
-                    indent=4)
+        if not args.hetero:
+            if args.percentile == None:
+                json.dump(results, open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/tasks.json", "w"),
+                            indent=4)
+            else:
+                json.dump(results, open(f"results/{model_name}/Layer{args.modify_layer}/{args.modify_type}/{args.percentile}th_tasks.json", "w"),
+                            indent=4)
+        else:
+            str_q = "".join(map(str, args.hetero_q))
+            str_k = "".join(map(str, args.hetero_k))
+            str_v = "".join(map(str, args.hetero_v))
+            str_o = "".join(map(str, args.hetero_o))
+            str_up = "".join(map(str, args.hetero_up))
+            str_gate = "".join(map(str, args.hetero_gate))
+            str_down = "".join(map(str, args.hetero_down))
+            filepath = f"results/{model_name}/Hetero/Q{str_q}K{str_k}V{str_v}O{str_o}Up{str_up}Gate{str_gate}Down{str_down}/tasks.json"
+            json.dump(results, open(filepath, "w"), indent=4)
         print("********************************")
         print("zero_shot evaluation results")
         print(results)

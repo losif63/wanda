@@ -5,3 +5,7 @@
 Tensors/**
 results/**
 lm-evaluation-harness/**
+tempfig/**
+tempfig2/**
+llm_weights/** 
+percentiles/**
